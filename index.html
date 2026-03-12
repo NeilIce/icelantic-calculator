@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Icelantic — MSP Pricing Calculator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: linear-gradient(160deg, #EBF3FB 0%, #F4F7FB 40%, #EAF1F9 100%); min-height: 100vh; }
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 3px; background: #DAEAF5; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #14429D; cursor: pointer; box-shadow: 0 1px 4px rgba(20,66,157,0.3); }
+  input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #14429D; cursor: pointer; border: none; }
+  button { font-family: inherit; }
+  @media (max-width: 500px) { .user-counters { flex-direction: column !important; } .per-user-cards { flex-direction: column !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const C = {
+  navy:          "#14429D",
+  lightBlue:     "#65BBEA",
+  teal:          "#0068A5",
+  bright:        "#097FC1",
+  cyan:          "#01A8FF",
+  lightBluePale: "#EBF6FD",
+  tealLight:     "#E0F0F8",
+  white:         "#FFFFFF",
+  grey:          "#F4F7FB",
+  border:        "#DAEAF5",
+  text:          "#0D1F3C",
+  muted:         "#5B7A9D",
+};
+
+function IcelanticLogo({ size = 40 }) {
+  const dots = [
+    [2,0],[3,0],[4,0],[7,0],[8,0],
+    [1,1],[2,1],[3,1],[4,1],[5,1],[7,1],[8,1],
+    [1,2],[2,2],[3,2],[4,2],[5,2],[6,2],
+    [1,3],[2,3],[3,3],[4,3],[5,3],[6,3],[7,3],
+    [0,4],[1,4],[2,4],[3,4],[4,4],[5,4],[6,4],[7,4],[8,4],
+    [0,5],[1,5],[2,5],[3,5],[4,5],[5,5],[6,5],[7,5],[8,5],
+    [1,6],[2,6],[3,6],[4,6],[5,6],[6,6],[7,6],
+    [1,7],[2,7],[3,7],[4,7],[5,7],[6,7],
+    [2,8],[3,8],[4,8],[5,8],
+    [3,9],[4,9],
+  ];
+  return React.createElement('svg', { width: size, height: size, viewBox: "0 0 10 10" },
+    dots.map(([x, y], i) =>
+      React.createElement('rect', { key: i, x: x*1.1, y: y*1.1, width: 0.9, height: 0.9, fill: C.lightBlue, rx: 0.1 })
+    )
+  );
+}
+
+function Toggle({ checked, onChange, color }) {
+  return (
+    <button onClick={() => onChange(!checked)} style={{
+      width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
+      background: checked ? color : "#C5D8E8",
+      position: "relative", transition: "background 0.2s", flexShrink: 0,
+    }}>
+      <span style={{
+        position: "absolute", top: 3, left: checked ? 23 : 3, width: 18, height: 18,
+        borderRadius: "50%", background: "#fff", transition: "left 0.2s",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.25)", display: "block",
+      }} />
+    </button>
+  );
+}
+
+function Section({ title, accent, icon, children }) {
+  return (
+    <div style={{ marginBottom: 20, borderRadius: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(20,66,157,0.10)", border: `1px solid ${C.border}` }}>
+      <div style={{ background: `linear-gradient(135deg, ${accent} 0%, ${accent}DD 100%)`, padding: "11px 20px", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 16 }}>{icon}</span>
+        <span style={{ color: "#fff", fontWeight: 700, fontSize: 14, letterSpacing: 0.4, textTransform: "uppercase" }}>{title}</span>
+      </div>
+      <div style={{ background: C.white, padding: "16px 20px" }}>{children}</div>
+    </div>
+  );
+}
+
+function Row({ label, sub, value, color }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ flex: 1, paddingRight: 12 }}>
+        <div style={{ fontSize: 14, color: C.text }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>{sub}</div>}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: color || C.bright, minWidth: 100, textAlign: "right" }}>{value}</div>
+    </div>
+  );
+}
+
+function AddOnRow({ label, sub, checked, onChange, price, color }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+        <Toggle checked={checked} onChange={onChange} color={color} />
+        <div>
+          <div style={{ fontSize: 14, color: C.text }}>{label}</div>
+          {sub && <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>{sub}</div>}
+        </div>
+      </div>
+      <div style={{ fontSize: 13, color: checked ? color : C.muted, fontWeight: 600, minWidth: 100, textAlign: "right" }}>{price}</div>
+    </div>
+  );
+}
+
+function TierCard({ label, price, sub, selected, color, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      flex: 1, padding: "14px 12px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+      border: `2px solid ${selected ? color : C.border}`,
+      background: selected ? `${color}15` : C.white,
+      transition: "all 0.15s", outline: "none",
+    }}>
+      {selected && <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, marginBottom: 6 }} />}
+      <div style={{ fontSize: 14, fontWeight: 700, color: selected ? color : C.text }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color, margin: "3px 0" }}>{price}</div>
+      <div style={{ fontSize: 12, color: C.muted }}>{sub}</div>
+    </button>
+  );
+}
+
+function UserCounter({ label, sublabel, count, onChange, color, badge }) {
+  return (
+    <div style={{ flex: 1, padding: "14px", background: count > 0 ? `${color}0F` : C.grey, borderRadius: 10, border: `2px solid ${count > 0 ? color : C.border}`, transition: "all 0.15s" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: count > 0 ? color : C.text }}>{label}</div>
+          <div style={{ fontSize: 12, color: C.muted }}>{sublabel}</div>
+        </div>
+        <div style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: `${color}20`, color, fontWeight: 700, border: `1px solid ${color}44`, whiteSpace: "nowrap" }}>{badge}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={() => onChange(Math.max(0, count - 1))} style={{
+          width: 32, height: 32, borderRadius: 8, border: `2px solid ${count > 0 ? color : C.border}`,
+          background: C.white, color: count > 0 ? color : C.muted, fontSize: 20, cursor: "pointer", fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1,
+        }}>−</button>
+        <input type="range" min={0} max={200} value={count} onChange={e => onChange(Number(e.target.value))}
+          style={{ flex: 1, accentColor: color }} />
+        <button onClick={() => onChange(Math.min(200, count + 1))} style={{
+          width: 32, height: 32, borderRadius: 8, border: `2px solid ${color}`,
+          background: C.white, color, fontSize: 20, cursor: "pointer", fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1,
+        }}>+</button>
+        <div style={{
+          minWidth: 48, textAlign: "center", fontSize: 20, fontWeight: 900,
+          color: count > 0 ? C.white : C.muted,
+          background: count > 0 ? `linear-gradient(135deg, ${color}, ${color}AA)` : C.grey,
+          borderRadius: 8, padding: "3px 10px", transition: "all 0.15s",
+        }}>{count}</div>
+      </div>
+    </div>
+  );
+}
+
+function SiteCounter({ count, onChange, color, firstCost, additionalCost }) {
+  const totalCost = count === 0 ? 0 : firstCost + Math.max(0, count - 1) * additionalCost;
+  const breakdown = () => {
+    if (count === 0) return "No offices — click + to add";
+    if (count === 1) return `1 office — ${firstCost === 0 ? "included free" : `£${firstCost}/mo`}`;
+    return `1st office ${firstCost === 0 ? "free" : `£${firstCost}/mo`} + ${count - 1} additional × £${additionalCost}/mo`;
+  };
+  return (
+    <div style={{ padding: "12px 14px", background: C.lightBluePale, borderRadius: 8, border: `1px solid ${C.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: count > 0 ? 10 : 0 }}>
+        <div>
+          <div style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>Number of offices</div>
+          <div style={{ fontSize: 12, color: C.muted }}>{breakdown()}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={() => onChange(Math.max(0, count - 1))} style={{
+            width: 32, height: 32, borderRadius: 8, border: `2px solid ${count > 0 ? color : C.border}`,
+            background: C.white, color: count > 0 ? color : C.muted, fontSize: 20, cursor: "pointer", fontWeight: 700,
+            display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1,
+          }}>−</button>
+          <div style={{
+            minWidth: 38, textAlign: "center", fontSize: 18, fontWeight: 800,
+            color: count > 0 ? color : C.muted,
+            background: count > 0 ? `${color}18` : C.grey,
+            borderRadius: 8, padding: "2px 10px", transition: "all 0.15s",
+          }}>{count}</div>
+          <button onClick={() => onChange(count + 1)} style={{
+            width: 32, height: 32, borderRadius: 8, border: `2px solid ${color}`,
+            background: C.white, color, fontSize: 20, cursor: "pointer", fontWeight: 700,
+            display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1,
+          }}>+</button>
+          {count > 0 && (
+            <div style={{ fontSize: 13, fontWeight: 700, color, minWidth: 65, textAlign: "right" }}>
+              {totalCost === 0 ? <span style={{ color: C.teal }}>Included</span> : `£${totalCost}/mo`}
+            </div>
+          )}
+        </div>
+      </div>
+      {count > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {Array.from({ length: count }).map((_, i) => {
+            const cost = i === 0 ? firstCost : additionalCost;
+            const free = cost === 0;
+            return (
+              <div key={i} style={{
+                fontSize: 11, padding: "3px 10px", borderRadius: 20, fontWeight: 600,
+                background: free ? C.tealLight : `${color}18`,
+                color: free ? C.teal : color,
+                border: `1px solid ${free ? C.teal : color}44`,
+              }}>
+                {i === 0 ? (free ? "Site 1 — Free" : `Site 1 — £${cost}/mo`) : `Site ${i+1} — £${cost}/mo`}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [fullUsers, setFullUsers]       = useState(10);
+  const [emailUsers, setEmailUsers]     = useState(0);
+  const [supportTier, setSupportTier]   = useState("basic");
+  const [offices, setOffices]           = useState(0);
+  const [governance, setGovernance]     = useState(false);
+  const [securityTier, setSecurityTier] = useState("none");
+  const [backup365, setBackup365]       = useState(false);
+
+  const totalUsers      = fullUsers + emailUsers;
+  const backupIncluded  = securityTier === "complete";
+  const showBackupToggle = securityTier !== "complete";
+
+  const supportCost       = fullUsers * (supportTier === "complete" ? 40 : 25);
+  const emailSupportCost  = emailUsers * 12.5;
+  const firstOfficeCost   = supportTier === "complete" ? 0 : 100;
+  const networkCost       = offices === 0 ? 0 : firstOfficeCost + Math.max(0, offices - 1) * 50;
+  const governanceCost    = governance ? 100 : 0;
+  const fullSecurityCost  = securityTier === "complete" ? fullUsers * 15  : securityTier === "basic" ? fullUsers * 10  : 0;
+  const emailSecurityCost = securityTier === "complete" ? emailUsers * 15 : securityTier === "basic" ? emailUsers * 5  : 0;
+  const securityCost      = fullSecurityCost + emailSecurityCost;
+  const backupCost        = !backupIncluded && backup365 ? totalUsers * 2.5 : 0;
+  const total             = supportCost + emailSupportCost + networkCost + governanceCost + securityCost + backupCost;
+
+  const perFullUser  = fullUsers  > 0 ? ((supportCost + fullSecurityCost  + (!backupIncluded && backup365 ? fullUsers  * 2.5 : 0)) / fullUsers).toFixed(2)  : null;
+  const perEmailUser = emailUsers > 0 ? ((emailSupportCost + emailSecurityCost + (!backupIncluded && backup365 ? emailUsers * 2.5 : 0)) / emailUsers).toFixed(2) : null;
+
+  const fmt  = n => n === 0 ? "—" : `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo`;
+  const fmtN = n => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo`;
+
+  return (
+    <div style={{ minHeight: "100vh", padding: "28px 16px" }}>
+      <div style={{ maxWidth: 680, margin: "0 auto" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+            <IcelanticLogo size={52} />
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 900, color: C.navy, letterSpacing: 3, textTransform: "uppercase", lineHeight: 1 }}>ICELANTIC</div>
+              <div style={{ fontSize: 10, color: C.bright, letterSpacing: 4, textTransform: "uppercase", fontWeight: 600, marginTop: 3 }}>MANAGED IT SERVICES</div>
+            </div>
+          </div>
+          <div style={{ width: 60, height: 3, background: `linear-gradient(90deg, ${C.lightBlue}, ${C.cyan})`, borderRadius: 2, marginBottom: 16 }} />
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: C.navy, margin: "0 0 6px", textAlign: "center" }}>Pricing Calculator</h1>
+          <p style={{ color: C.muted, fontSize: 14, margin: 0, textAlign: "center" }}>Build your package and see your monthly investment instantly</p>
+        </div>
+
+        {/* Users */}
+        <Section title="Number of Users" accent={C.navy} icon="👥">
+          <div className="user-counters" style={{ display: "flex", gap: 12 }}>
+            <UserCounter label="Full Users" sublabel="Full IT support access"
+              count={fullUsers} onChange={setFullUsers} color={C.navy} badge="£25–40/mo" />
+            <UserCounter label="Email-Only Users" sublabel="Email, identity & backup only"
+              count={emailUsers} onChange={setEmailUsers} color={C.cyan} badge="£12.50/mo" />
+          </div>
+          {emailUsers > 0 && (
+            <div style={{ marginTop: 12, padding: "9px 14px", background: `${C.cyan}12`, borderRadius: 8, fontSize: 13, color: C.bright, border: `1px solid ${C.cyan}44` }}>
+              <strong>Email-only users</strong> — mailbox access, identity protection & 365 Backup. No device support included.
+            </div>
+          )}
+        </Section>
+
+        {/* Support */}
+        <Section title="Support Tier" accent={C.teal} icon="🖥️">
+          <div style={{ marginBottom: 8, fontSize: 12, color: C.muted }}>Applies to full users only · Email-only users always £12.50/mo</div>
+          <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+            <TierCard label="Basic Support" price="£25 / user / mo" sub="Remote only · £100/hr onsite"
+              selected={supportTier === "basic"} color={C.bright}
+              onClick={() => { setSupportTier("basic"); setOffices(0); }} />
+            <TierCard label="Complete Support" price="£40 / user / mo" sub="Onsite included · 1st site free"
+              selected={supportTier === "complete"} color={C.teal}
+              onClick={() => { setSupportTier("complete"); setOffices(0); }} />
+          </div>
+          <SiteCounter count={offices} onChange={setOffices}
+            color={supportTier === "complete" ? C.teal : C.bright}
+            firstCost={firstOfficeCost} additionalCost={50} />
+        </Section>
+
+        {/* Governance */}
+        <Section title="Governance Add-On" accent={C.navy} icon="📋">
+          <AddOnRow label="TAM & QRM Bolt-On"
+            sub="Bi-monthly account calls + 4 quarterly director reviews/year"
+            checked={governance} onChange={setGovernance}
+            price="£100/mo flat" color={C.navy} />
+        </Section>
+
+        {/* Security */}
+        <Section title="Security Add-Ons" accent={C.bright} icon="🔒">
+          {emailUsers > 0 && (
+            <div style={{ marginBottom: 12, padding: "8px 14px", background: `${C.cyan}12`, borderRadius: 8, fontSize: 12, color: C.bright, border: `1px solid ${C.cyan}44` }}>
+              Email-only users: <strong>Ice-Secure Basic = ITDR only (£5/user)</strong> · <strong>Ice-Secure Complete = full suite (£15/user)</strong>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+            {[
+              { id: "none",     label: "No Security",         price: "—",           sub: "",                             color: C.muted },
+              { id: "basic",    label: "Ice-Secure Basic",    price: "£10/user/mo", sub: "EDR + ITDR (full users)",      color: C.teal },
+              { id: "complete", label: "Ice-Secure Complete", price: "£15/user/mo", sub: "Full suite + 365 Backup free", color: C.bright },
+            ].map(t => (
+              <TierCard key={t.id} label={t.label} price={t.price} sub={t.sub}
+                selected={securityTier === t.id} color={t.color}
+                onClick={() => { setSecurityTier(t.id); if (t.id === "complete") setBackup365(false); }} />
+            ))}
+          </div>
+          {showBackupToggle && (
+            <AddOnRow label="Microsoft 365 Backup"
+              sub={`${totalUsers} user${totalUsers !== 1 ? "s" : ""} (${fullUsers} full + ${emailUsers} email-only) × £2.50`}
+              checked={backup365} onChange={setBackup365}
+              price="£2.50/user/mo" color={C.bright} />
+          )}
+          {backupIncluded && (
+            <div style={{ padding: "9px 14px", background: C.lightBluePale, borderRadius: 8, fontSize: 13, color: C.bright, fontWeight: 600, border: `1px solid ${C.border}` }}>
+              ✓ Microsoft 365 Backup included free for all users with Ice-Secure Complete
+            </div>
+          )}
+        </Section>
+
+        {/* Summary */}
+        <div style={{ borderRadius: 12, overflow: "hidden", boxShadow: "0 6px 24px rgba(20,66,157,0.18)", border: `2px solid ${C.navy}` }}>
+          <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, ${C.teal} 100%)`, padding: "14px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+            <IcelanticLogo size={28} />
+            <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Monthly Summary</span>
+          </div>
+          <div style={{ background: C.white, padding: "16px 20px" }}>
+
+            {fullUsers > 0 && (
+              <Row label={`${supportTier === "complete" ? "Complete" : "Basic"} Support — Full Users`}
+                sub={`${fullUsers} users × £${supportTier === "complete" ? 40 : 25}`}
+                value={fmtN(supportCost)} color={C.teal} />
+            )}
+            {emailUsers > 0 && (
+              <Row label="Email-Only Users"
+                sub={`${emailUsers} users × £12.50`}
+                value={fmtN(emailSupportCost)} color={C.cyan} />
+            )}
+
+            {offices === 0 && (
+              <Row label="Network Management" sub="No offices configured" value="—" color={C.muted} />
+            )}
+            {offices > 0 && Array.from({ length: offices }).map((_, i) => {
+              const cost = i === 0 ? firstOfficeCost : 50;
+              return (
+                <Row key={i}
+                  label={`Network Management — Site ${i + 1}`}
+                  sub={cost === 0 ? "Included with Complete Support" : `£${cost}/mo`}
+                  value={cost === 0
+                    ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 600 }}>Included</span>
+                    : fmt(cost)}
+                  color={C.teal} />
+              );
+            })}
+
+            {governance && (
+              <Row label="TAM & QRM Governance" value={fmtN(governanceCost)} color={C.navy} />
+            )}
+
+            {securityTier !== "none" && fullUsers > 0 && (
+              <Row label={`${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic"} — Full Users`}
+                sub={`${fullUsers} users × £${securityTier === "complete" ? 15 : 10}`}
+                value={fmtN(fullSecurityCost)} color={C.bright} />
+            )}
+            {securityTier !== "none" && emailUsers > 0 && (
+              <Row label={`${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic (ITDR only)"} — Email Users`}
+                sub={`${emailUsers} users × £${securityTier === "complete" ? 15 : 5}`}
+                value={fmtN(emailSecurityCost)} color={C.bright} />
+            )}
+
+            {backupIncluded && (
+              <Row label="Microsoft 365 Backup"
+                sub={`All ${totalUsers} users — included with Ice-Secure Complete`}
+                value={<span style={{ fontSize: 12, color: C.teal, fontWeight: 600 }}>Included</span>} />
+            )}
+            {backup365 && !backupIncluded && (
+              <Row label="Microsoft 365 Backup"
+                sub={`${totalUsers} users × £2.50`}
+                value={fmtN(backupCost)} color={C.bright} />
+            )}
+
+            {/* Total bar */}
+            <div style={{ marginTop: 16, padding: "18px 20px", background: `linear-gradient(135deg, ${C.navy} 0%, ${C.teal} 100%)`, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ color: C.lightBlue, fontSize: 13, fontWeight: 600 }}>Total Monthly Investment</div>
+                <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 2 }}>Excl. VAT & Microsoft 365 licensing</div>
+              </div>
+              <div style={{ fontSize: 34, fontWeight: 900, color: "#fff", textAlign: "right" }}>
+                £{total.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span style={{ fontSize: 15, fontWeight: 400, color: C.lightBlue }}>/mo</span>
+              </div>
+            </div>
+
+            {/* Per user & annual */}
+            <div className="per-user-cards" style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {perFullUser && (
+                <div style={{ flex: 1, minWidth: 140, padding: "10px 14px", background: C.lightBluePale, borderRadius: 8, border: `1px solid ${C.border}`, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>Per full user <span style={{ fontSize: 10 }}>(support & security)</span></div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>£{perFullUser}<span style={{ fontSize: 12, fontWeight: 400, color: C.muted }}>/mo</span></div>
+                </div>
+              )}
+              {perEmailUser && (
+                <div style={{ flex: 1, minWidth: 140, padding: "10px 14px", background: `${C.cyan}0F`, borderRadius: 8, border: `1px solid ${C.cyan}44`, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>Per email user <span style={{ fontSize: 10 }}>(support & security)</span></div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: C.bright }}>£{perEmailUser}<span style={{ fontSize: 12, fontWeight: 400, color: C.muted }}>/mo</span></div>
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 140, padding: "10px 14px", background: C.lightBluePale, borderRadius: 8, border: `1px solid ${C.border}`, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>Annual commitment</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>£{(total * 12).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 16, marginBottom: 32, fontSize: 11, color: C.muted }}>
+          All prices exclude VAT · PC/Laptop setup £150 per device · Projects priced on request
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
