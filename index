@@ -46,6 +46,39 @@ const C = {
   greenLight:    "#ECFDF5",
 };
 
+// ─── VOLUME BANDING (GRADUATED / MARGINAL) ──────────────────────────────────
+// Support pricing steps down per-band as headcount grows, like a tax bracket:
+// each user is billed at the rate for the band they fall into, not the whole
+// account re-rated at once. Full Users (Complete Support, onsite) and Remote
+// Users (Basic Support, remote-only) are banded independently of one another,
+// so an account can mix a fully-supported HQ with remote-only branch offices.
+// Email-Only Users remain a flat £12.50/mo — no banding.
+const SUPPORT_BANDS = {
+  basic:    [ { upTo: 50, rate: 25 }, { upTo: 75, rate: 20 }, { upTo: Infinity, rate: 17.5 } ],
+  complete: [ { upTo: 50, rate: 40 }, { upTo: 75, rate: 30 }, { upTo: Infinity, rate: 25 } ],
+};
+
+function calculateSupportBanding(users, tier) {
+  const bands = SUPPORT_BANDS[tier] || SUPPORT_BANDS.basic;
+  let remaining = users;
+  let prevCap = 0;
+  let total = 0;
+  const breakdown = [];
+  for (const band of bands) {
+    if (remaining <= 0) break;
+    const bandSize = Math.min(remaining, band.upTo - prevCap);
+    if (bandSize > 0) {
+      const cost = bandSize * band.rate;
+      breakdown.push({ from: prevCap + 1, to: prevCap + bandSize, count: bandSize, rate: band.rate, cost });
+      total += cost;
+      remaining -= bandSize;
+    }
+    prevCap = band.upTo;
+  }
+  const blendedRate = users > 0 ? (total / users) : 0;
+  return { total, breakdown, blendedRate };
+}
+
 function IcelanticLogo({ size = 40 }) {
   const dots = [
     [2,0],[3,0],[4,0],[7,0],[8,0],
@@ -268,6 +301,39 @@ function SiteCounter({ label, count, onChange, color, firstCost, additionalCost,
   );
 }
 
+function SupportBandBreakdown({ label, users, tier, color }) {
+  if (users === 0) return null;
+  const { breakdown, blendedRate } = calculateSupportBanding(users, tier);
+  const flatRate = tier === "complete" ? 40 : 25;
+  const saving = flatRate > 0 ? ((flatRate - blendedRate) / flatRate) * 100 : 0;
+  const isBlended = breakdown.length > 1;
+
+  return (
+    <div style={{ marginTop: 10, marginBottom: 12, padding: "14px", background: `${color}0A`, borderRadius: 10, border: `1px solid ${color}33` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: 0.6 }}>
+          {label} — {users} user{users !== 1 ? "s" : ""}
+        </div>
+        {saving > 0.4 && (
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.green, background: C.greenLight, padding: "2px 9px", borderRadius: 20, border: `1px solid ${C.green}33` }}>
+            {saving.toFixed(0)}% below entry rate
+          </div>
+        )}
+      </div>
+      {breakdown.map((b, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", fontSize: 13, color: C.text, borderBottom: i < breakdown.length - 1 ? `1px solid ${color}22` : "none" }}>
+          <span>Users {b.from}–{b.to === Infinity ? `${b.from}+` : b.to} <span style={{ color: C.muted }}>({b.count} × £{b.rate}/mo)</span></span>
+          <span style={{ fontWeight: 700, color }}>£{b.cost.toFixed(2)}/mo</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: `1px solid ${color}44`, fontSize: 13 }}>
+        <span style={{ fontWeight: 700, color: C.text }}>{isBlended ? "Blended rate per user" : "Rate per user"}</span>
+        <span style={{ fontWeight: 800, color }}>£{blendedRate.toFixed(2)}/mo</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── PROPOSAL SUMMARY PAGE ───────────────────────────────────────────────────
 function ProposalSummary({ data, label, onBack }) {
   const [copied, setCopied] = useState(false);
@@ -282,10 +348,12 @@ function ProposalSummary({ data, label, onBack }) {
     fullSecurityCost, remoteSecurityCost, emailSecurityCost,
     backupCost, backupUnitPrice, total, backupDiscounted, hasOnsitePresence,
     firstOfficeCost, perFullUser, perRemoteUser, perEmailUser,
+    fullBreakdown, fullBlendedRate, fullBlended, remoteBreakdown, remoteBlendedRate, remoteBlended,
     serverBackupServers, serverBackupGB, serverBackupBaseCost, serverBackupStorageCost,
   } = data;
 
   const totalUsers = fullUsers + remoteUsers + emailUsers;
+  const fmtBand = b => `Users ${b.from}–${b.to === Infinity ? `${b.from}+` : b.to}: ${b.count} × £${b.rate}/mo = £${b.cost.toFixed(2)}/mo`;
 
   const proposalText = `ICELANTIC MANAGED IT SERVICES
 Proposal Configuration — ${clientName || "Client"}
@@ -302,11 +370,13 @@ Website: ${clientWebsite || "—"}
 
 SELECTED SERVICES & PRICING
 
-${fullUsers > 0 ? `Complete Support — Full Users, Onsite (Special Pricing)
-${fullUsers} users × £35/mo = £${fullSupportCost.toFixed(2)}/mo` : ""}
+${fullUsers > 0 ? `Complete Support — Full Users, Onsite (Volume Banded)
+${fullBreakdown.map(b => `  ${fmtBand(b)}`).join("\n")}
+  Subtotal: £${fullSupportCost.toFixed(2)}/mo${fullBlended ? ` (blended £${fullBlendedRate.toFixed(2)}/user)` : ""}` : ""}
 
-${remoteUsers > 0 ? `Basic Support — Remote Users (Special Pricing)
-${remoteUsers} users × £20/mo = £${remoteSupportCost.toFixed(2)}/mo` : ""}
+${remoteUsers > 0 ? `Basic Support — Remote Users (Volume Banded)
+${remoteBreakdown.map(b => `  ${fmtBand(b)}`).join("\n")}
+  Subtotal: £${remoteSupportCost.toFixed(2)}/mo${remoteBlended ? ` (blended £${remoteBlendedRate.toFixed(2)}/user)` : ""}` : ""}
 
 ${emailUsers > 0 ? `Email-Only Users
 ${emailUsers} users × £12.50/mo = £${emailSupportCost.toFixed(2)}/mo` : ""}
@@ -354,8 +424,8 @@ AGENT PROMPT — paste below into the Icelantic Proposal Builder:
 
 The client is ${clientName || "[client name]"}${clientWebsite ? `, their website is ${clientWebsite}` : ""}. Once you have written the client overview, here are the selected services and pricing:
 
-${fullUsers > 0 ? `- Complete Support, onsite (special pricing): ${fullUsers} full users × £35/mo = £${fullSupportCost.toFixed(2)}/mo` : ""}
-${remoteUsers > 0 ? `- Basic Support, remote-only (special pricing): ${remoteUsers} remote users × £20/mo = £${remoteSupportCost.toFixed(2)}/mo` : ""}
+${fullUsers > 0 ? (fullBlended ? `- Complete Support, onsite (volume banded, ${fullUsers} full users, blended £${fullBlendedRate.toFixed(2)}/user): £${fullSupportCost.toFixed(2)}/mo\n${fullBreakdown.map(b => `  · ${fmtBand(b)}`).join("\n")}` : `- Complete Support, onsite: ${fullUsers} full users × £40/mo = £${fullSupportCost.toFixed(2)}/mo`) : ""}
+${remoteUsers > 0 ? (remoteBlended ? `- Basic Support, remote-only (volume banded, ${remoteUsers} remote users, blended £${remoteBlendedRate.toFixed(2)}/user): £${remoteSupportCost.toFixed(2)}/mo\n${remoteBreakdown.map(b => `  · ${fmtBand(b)}`).join("\n")}` : `- Basic Support, remote-only: ${remoteUsers} remote users × £25/mo = £${remoteSupportCost.toFixed(2)}/mo`) : ""}
 ${emailUsers > 0 ? `- Email-Only Users: ${emailUsers} users × £12.50/mo = £${emailSupportCost.toFixed(2)}/mo` : ""}
 ${offices > 0 && networkCost > 0 ? `- Network Management (${offices} office${offices > 1 ? "s" : ""}): £${networkCost.toFixed(2)}/mo` : ""}
 ${offices > 0 && networkCost === 0 ? `- Network Management (1 office): Included — onsite Full Users on account` : ""}
@@ -418,8 +488,14 @@ ${notes ? `\nAdditional notes: ${notes}` : ""}`.replace(/\n{3,}/g, "\n\n").trim(
             <span style={{ color: C.white, fontWeight: 700, fontSize: 14, textTransform: "uppercase", letterSpacing: 0.5 }}>Selected Services</span>
           </div>
           <div style={{ padding: "4px 20px 8px" }}>
-            {fullUsers > 0 && <SummaryRow label="Complete Support — Full Users" sub={`${fullUsers} users × £35/mo`} value={`£${fullSupportCost.toFixed(2)}/mo`} color={C.teal} />}
-            {remoteUsers > 0 && <SummaryRow label="Basic Support — Remote Users" sub={`${remoteUsers} users × £20/mo`} value={`£${remoteSupportCost.toFixed(2)}/mo`} color={C.bright} />}
+            {fullUsers > 0 && fullBreakdown.map((b, i) => (
+              <SummaryRow key={`fb-${i}`} label={`Complete Support — Full Users ${b.from}–${b.to === Infinity ? `${b.from}+` : b.to}`} sub={`${b.count} users × £${b.rate}/mo`} value={`£${b.cost.toFixed(2)}/mo`} color={C.teal} />
+            ))}
+            {fullUsers > 0 && fullBlended && <SummaryRow label="Full Users — Blended Rate" sub={`${fullUsers} users total`} value={`£${fullBlendedRate.toFixed(2)}/user/mo`} color={C.muted} />}
+            {remoteUsers > 0 && remoteBreakdown.map((b, i) => (
+              <SummaryRow key={`rb-${i}`} label={`Basic Support — Remote Users ${b.from}–${b.to === Infinity ? `${b.from}+` : b.to}`} sub={`${b.count} users × £${b.rate}/mo`} value={`£${b.cost.toFixed(2)}/mo`} color={C.bright} />
+            ))}
+            {remoteUsers > 0 && remoteBlended && <SummaryRow label="Remote Users — Blended Rate" sub={`${remoteUsers} users total`} value={`£${remoteBlendedRate.toFixed(2)}/user/mo`} color={C.muted} />}
             {emailUsers > 0 && <SummaryRow label="Email-Only Users" sub={`${emailUsers} users × £12.50/mo`} value={`£${emailSupportCost.toFixed(2)}/mo`} color={C.cyan} />}
             {offices > 0 && Array.from({ length: offices }).map((_, i) => {
               const cost = i === 0 ? firstOfficeCost : 50;
@@ -491,7 +567,7 @@ ${notes ? `\nAdditional notes: ${notes}` : ""}`.replace(/\n{3,}/g, "\n\n").trim(
             </button>
           </div>
           <div style={{ background: C.grey, borderRadius: 8, padding: "12px 14px", fontSize: 12, color: C.text, fontFamily: "monospace", whiteSpace: "pre-wrap", maxHeight: 200, overflowY: "auto", lineHeight: 1.6 }}>
-            {`The client is ${clientName || "[client name]"}${clientWebsite ? `, their website is ${clientWebsite}` : ""}. Once you have written the client overview, here are the selected services and pricing:\n\n${fullUsers > 0 ? `- Complete Support, onsite (special pricing): ${fullUsers} full users × £35/mo = £${fullSupportCost.toFixed(2)}/mo\n` : ""}${remoteUsers > 0 ? `- Basic Support, remote-only (special pricing): ${remoteUsers} remote users × £20/mo = £${remoteSupportCost.toFixed(2)}/mo\n` : ""}${emailUsers > 0 ? `- Email-Only Users: ${emailUsers} × £12.50/mo = £${emailSupportCost.toFixed(2)}/mo\n` : ""}${offices > 0 && networkCost > 0 ? `- Network Management (${offices} office${offices > 1 ? "s" : ""}): £${networkCost.toFixed(2)}/mo\n` : ""}${offices > 0 && networkCost === 0 ? `- Network Management (1 office): Included — onsite Full Users on account\n` : ""}${servers > 0 && !hasOnsitePresence ? `- Server Support: ${servers} server${servers > 1 ? "s" : ""} × £50/mo = £${serverCost.toFixed(2)}/mo\n` : ""}${servers > 0 && hasOnsitePresence ? `- Server Support: ${servers} server${servers > 1 ? "s" : ""} — Included (onsite Full Users on account)\n` : ""}${governance ? `- Strategic & Technical Account Management: £100.00/mo\n` : ""}${securityTier !== "none" && fullUsers > 0 ? `- ${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic"} (full users): ${fullUsers} × £${securityTier === "complete" ? 15 : 10}/mo = £${fullSecurityCost.toFixed(2)}/mo\n` : ""}${securityTier !== "none" && remoteUsers > 0 ? `- ${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic"} (remote users): ${remoteUsers} × £${securityTier === "complete" ? 15 : 10}/mo = £${remoteSecurityCost.toFixed(2)}/mo\n` : ""}${securityTier !== "none" && emailUsers > 0 ? `- ${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic (ITDR)"} (email users): ${emailUsers} × £${securityTier === "complete" ? 15 : 5}/mo = £${emailSecurityCost.toFixed(2)}/mo\n` : ""}${backup365Count > 0 ? `- Microsoft 365 Backup: ${backup365Count} licence${backup365Count !== 1 ? "s" : ""} × £${backupUnitPrice.toFixed(2)}/mo = £${backupCost.toFixed(2)}/mo\n` : ""}\nMonthly Total: £${total.toFixed(2)}\nAnnual Commitment: £${(total * 12).toFixed(2)}${notes ? `\n\nNotes: ${notes}` : ""}`}
+            {`The client is ${clientName || "[client name]"}${clientWebsite ? `, their website is ${clientWebsite}` : ""}. Once you have written the client overview, here are the selected services and pricing:\n\n${fullUsers > 0 ? (fullBlended ? `- Complete Support, onsite (volume banded, ${fullUsers} full users, blended £${fullBlendedRate.toFixed(2)}/user): £${fullSupportCost.toFixed(2)}/mo\n${fullBreakdown.map(b => `  · ${fmtBand(b)}\n`).join("")}` : `- Complete Support, onsite: ${fullUsers} full users × £40/mo = £${fullSupportCost.toFixed(2)}/mo\n`) : ""}${remoteUsers > 0 ? (remoteBlended ? `- Basic Support, remote-only (volume banded, ${remoteUsers} remote users, blended £${remoteBlendedRate.toFixed(2)}/user): £${remoteSupportCost.toFixed(2)}/mo\n${remoteBreakdown.map(b => `  · ${fmtBand(b)}\n`).join("")}` : `- Basic Support, remote-only: ${remoteUsers} remote users × £25/mo = £${remoteSupportCost.toFixed(2)}/mo\n`) : ""}${emailUsers > 0 ? `- Email-Only Users: ${emailUsers} × £12.50/mo = £${emailSupportCost.toFixed(2)}/mo\n` : ""}${offices > 0 && networkCost > 0 ? `- Network Management (${offices} office${offices > 1 ? "s" : ""}): £${networkCost.toFixed(2)}/mo\n` : ""}${offices > 0 && networkCost === 0 ? `- Network Management (1 office): Included — onsite Full Users on account\n` : ""}${servers > 0 && !hasOnsitePresence ? `- Server Support: ${servers} server${servers > 1 ? "s" : ""} × £50/mo = £${serverCost.toFixed(2)}/mo\n` : ""}${servers > 0 && hasOnsitePresence ? `- Server Support: ${servers} server${servers > 1 ? "s" : ""} — Included (onsite Full Users on account)\n` : ""}${governance ? `- Strategic & Technical Account Management: £100.00/mo\n` : ""}${securityTier !== "none" && fullUsers > 0 ? `- ${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic"} (full users): ${fullUsers} × £${securityTier === "complete" ? 15 : 10}/mo = £${fullSecurityCost.toFixed(2)}/mo\n` : ""}${securityTier !== "none" && remoteUsers > 0 ? `- ${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic"} (remote users): ${remoteUsers} × £${securityTier === "complete" ? 15 : 10}/mo = £${remoteSecurityCost.toFixed(2)}/mo\n` : ""}${securityTier !== "none" && emailUsers > 0 ? `- ${securityTier === "complete" ? "Ice-Secure Complete" : "Ice-Secure Basic (ITDR)"} (email users): ${emailUsers} × £${securityTier === "complete" ? 15 : 5}/mo = £${emailSecurityCost.toFixed(2)}/mo\n` : ""}${backup365Count > 0 ? `- Microsoft 365 Backup: ${backup365Count} licence${backup365Count !== 1 ? "s" : ""} × £${backupUnitPrice.toFixed(2)}/mo = £${backupCost.toFixed(2)}/mo\n` : ""}\nMonthly Total: £${total.toFixed(2)}\nAnnual Commitment: £${(total * 12).toFixed(2)}${notes ? `\n\nNotes: ${notes}` : ""}`}
           </div>
         </div>
 
@@ -540,9 +616,16 @@ function App() {
   const backupUnitPrice     = backupDiscounted ? 1.25 : 2.5;
   const firstOfficeCost   = hasOnsitePresence ? 0 : 100;
 
-  // One-off special pricing for this proposal — flat rates, no volume banding
-  const fullSupportCost   = fullUsers * 35;
-  const remoteSupportCost = remoteUsers * 20;
+  const fullBanding    = calculateSupportBanding(fullUsers, "complete");
+  const remoteBanding  = calculateSupportBanding(remoteUsers, "basic");
+  const fullSupportCost   = fullBanding.total;
+  const remoteSupportCost = remoteBanding.total;
+  const fullBreakdown     = fullBanding.breakdown;
+  const remoteBreakdown   = remoteBanding.breakdown;
+  const fullBlendedRate   = fullBanding.blendedRate;
+  const remoteBlendedRate = remoteBanding.blendedRate;
+  const fullBlended       = fullBreakdown.length > 1;   // true only once headcount actually spans more than one band
+  const remoteBlended     = remoteBreakdown.length > 1;
 
   const emailSupportCost    = emailUsers * 12.5;
   const networkCost         = offices === 0 ? 0 : firstOfficeCost + Math.max(0, offices - 1) * 50;
@@ -580,6 +663,7 @@ function App() {
     fullSecurityCost, remoteSecurityCost, emailSecurityCost,
     backupCost: backup365Cost, backupUnitPrice, total, backupDiscounted, hasOnsitePresence,
     firstOfficeCost, perFullUser, perRemoteUser, perEmailUser,
+    fullBreakdown, fullBlendedRate, fullBlended, remoteBreakdown, remoteBlendedRate, remoteBlended,
     serverBackupServers, serverBackupGB,
     serverBackupBaseCost, serverBackupStorageCost, serverBackupTotal,
   };
@@ -633,9 +717,9 @@ function App() {
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             <UserCounter label="Full Users" sublabel="Complete Support · onsite included"
-              count={fullUsers} onChange={setFullUsers} color={C.teal} badge="£35/mo" />
+              count={fullUsers} onChange={setFullUsers} color={C.teal} badge="£25–40/mo · banded" />
             <UserCounter label="Remote Users" sublabel="Basic Support · remote only"
-              count={remoteUsers} onChange={setRemoteUsers} color={C.bright} badge="£20/mo" />
+              count={remoteUsers} onChange={setRemoteUsers} color={C.bright} badge="£17.50–25/mo · banded" />
           </div>
           <div style={{ display: "flex" }}>
             <UserCounter label="Email-Only Users" sublabel="Email, identity & backup only"
@@ -646,8 +730,10 @@ function App() {
         {/* Support & Infrastructure */}
         <Section title="Support & Infrastructure" accent={C.teal} icon="🖥️">
           <div style={{ marginBottom: 8, fontSize: 12, color: C.muted }}>
-            Special pricing for this proposal · Applies to Full and Remote users only · Email-only users are always £12.50/mo.
+            Full Users and Remote Users are volume banded independently of each other — each pool steps down its own rate as it grows.
           </div>
+          <SupportBandBreakdown label="Full Users — Complete Support" users={fullUsers} tier="complete" color={C.teal} />
+          <SupportBandBreakdown label="Remote Users — Basic Support" users={remoteUsers} tier="basic" color={C.bright} />
 
           <SiteCounter label="Number of offices" count={offices} onChange={setOffices}
             color={hasOnsitePresence ? C.teal : C.bright}
@@ -766,14 +852,20 @@ function App() {
             <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Monthly Summary</span>
           </div>
           <div style={{ background: C.white, padding: "16px 20px" }}>
-            {fullUsers > 0 && <SummaryRow label="Complete Support — Full Users" sub={`${fullUsers} users × £35`} value={fmtN(fullSupportCost)} color={C.teal} />}
+            {fullUsers > 0 && fullBreakdown.map((b, i) => (
+              <SummaryRow key={`fbm-${i}`} label={`Complete Support — Full Users ${b.from}–${b.to === Infinity ? `${b.from}+` : b.to}`} sub={`${b.count} × £${b.rate}`} value={fmtN(b.cost)} color={C.teal} />
+            ))}
+            {fullUsers > 0 && fullBlended && <SummaryRow label="Full Users — Blended Rate" sub={`Across all ${fullUsers} full users`} value={`£${fullBlendedRate.toFixed(2)}/user/mo`} color={C.muted} />}
             {fullUsers > 0 && (
               <div style={{ margin: "4px 0 8px", padding: "8px 14px", background: C.tealLight, borderRadius: 8, fontSize: 12, color: C.teal, border: `1px solid ${C.teal}33`, display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 14 }}>✓</span>
                 <span><strong>Includes:</strong> onsite support · unlocks free 1st-site network management &amp; included server support</span>
               </div>
             )}
-            {remoteUsers > 0 && <SummaryRow label="Basic Support — Remote Users" sub={`${remoteUsers} users × £20`} value={fmtN(remoteSupportCost)} color={C.bright} />}
+            {remoteUsers > 0 && remoteBreakdown.map((b, i) => (
+              <SummaryRow key={`rbm-${i}`} label={`Basic Support — Remote Users ${b.from}–${b.to === Infinity ? `${b.from}+` : b.to}`} sub={`${b.count} × £${b.rate}`} value={fmtN(b.cost)} color={C.bright} />
+            ))}
+            {remoteUsers > 0 && remoteBlended && <SummaryRow label="Remote Users — Blended Rate" sub={`Across all ${remoteUsers} remote users`} value={`£${remoteBlendedRate.toFixed(2)}/user/mo`} color={C.muted} />}
             {emailUsers > 0 && <SummaryRow label="Email-Only Users" sub={`${emailUsers} users × £12.50`} value={fmtN(emailSupportCost)} color={C.cyan} />}
             {offices === 0 && <SummaryRow label="Network Management" sub="No offices configured" value="—" color={C.muted} />}
             {offices > 0 && Array.from({ length: offices }).map((_, i) => {
@@ -808,7 +900,7 @@ function App() {
               {perFullUser && (
                 <div style={{ flex: 1, minWidth: 140, padding: "10px 14px", background: securityTier !== "none" ? `linear-gradient(135deg, ${C.lightBluePale}, ${C.tealLight})` : C.lightBluePale, borderRadius: 8, border: `1px solid ${securityTier !== "none" ? C.teal : C.border}`, textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: securityTier !== "none" ? C.teal : C.muted, fontWeight: securityTier !== "none" ? 700 : 400, marginBottom: 3 }}>
-                    Per full user{securityTier !== "none" ? " — support & cybersecurity" : " — support only"}
+                    Per full user{fullBlended ? " (blended)" : ""}{securityTier !== "none" ? " — support & cybersecurity" : " — support only"}
                   </div>
                   <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>£{perFullUser}<span style={{ fontSize: 12, fontWeight: 400, color: C.muted }}>/mo</span></div>
                   {securityTier !== "none" && (
@@ -821,7 +913,7 @@ function App() {
               {perRemoteUser && (
                 <div style={{ flex: 1, minWidth: 140, padding: "10px 14px", background: securityTier !== "none" ? `${C.bright}0F` : C.lightBluePale, borderRadius: 8, border: `1px solid ${securityTier !== "none" ? C.bright : C.border}`, textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: securityTier !== "none" ? C.bright : C.muted, fontWeight: securityTier !== "none" ? 700 : 400, marginBottom: 3 }}>
-                    Per remote user{securityTier !== "none" ? " — support & cybersecurity" : " — support only"}
+                    Per remote user{remoteBlended ? " (blended)" : ""}{securityTier !== "none" ? " — support & cybersecurity" : " — support only"}
                   </div>
                   <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>£{perRemoteUser}<span style={{ fontSize: 12, fontWeight: 400, color: C.muted }}>/mo</span></div>
                   {securityTier !== "none" && (
@@ -866,6 +958,8 @@ function App() {
                 const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
                 const d = proposalData;
                 const totalUsersPdf = d.fullUsers + d.remoteUsers + d.emailUsers;
+                const fmtBandPdf = b => `${b.count} × £${b.rate}/mo`;
+                const bandLabel = b => `Users ${b.from}–${b.to === Infinity ? `${b.from}+` : b.to}`;
                 const navy = [20, 66, 157];
                 const teal = [0, 104, 165];
                 const lightBlue = [101, 187, 234];
@@ -942,8 +1036,14 @@ function App() {
                 // Services
                 sectionHeader("Selected Services");
                 const rows = [];
-                if (d.fullUsers > 0) rows.push([`Complete Support — Full Users`, `${d.fullUsers} users × £35/mo`, `£${d.fullSupportCost.toFixed(2)}/mo`, false]);
-                if (d.remoteUsers > 0) rows.push([`Basic Support — Remote Users`, `${d.remoteUsers} users × £20/mo`, `£${d.remoteSupportCost.toFixed(2)}/mo`, false]);
+                if (d.fullUsers > 0) {
+                  d.fullBreakdown.forEach(b => rows.push([`Complete Support — ${bandLabel(b)}`, fmtBandPdf(b), `£${b.cost.toFixed(2)}/mo`, false]));
+                  if (d.fullBlended) rows.push([`Full Users — Blended Rate`, `Across all ${d.fullUsers} full users`, `£${d.fullBlendedRate.toFixed(2)}/user/mo`, false]);
+                }
+                if (d.remoteUsers > 0) {
+                  d.remoteBreakdown.forEach(b => rows.push([`Basic Support — ${bandLabel(b)}`, fmtBandPdf(b), `£${b.cost.toFixed(2)}/mo`, false]));
+                  if (d.remoteBlended) rows.push([`Remote Users — Blended Rate`, `Across all ${d.remoteUsers} remote users`, `£${d.remoteBlendedRate.toFixed(2)}/user/mo`, false]);
+                }
                 if (d.emailUsers > 0) rows.push([`Email-Only Users`, `${d.emailUsers} users × £12.50/mo`, `£${d.emailSupportCost.toFixed(2)}/mo`, false]);
                 if (d.offices > 0) {
                   for (let i = 0; i < d.offices; i++) {
@@ -982,8 +1082,14 @@ function App() {
 
                 // Per user / annual cards
                 const cards = [];
-                if (d.perFullUser) cards.push([`Per full user (${d.securityTier !== "none" ? "support & security" : "support only"})`, `£${d.perFullUser}/mo`]);
-                if (d.perRemoteUser) cards.push([`Per remote user (${d.securityTier !== "none" ? "support & security" : "support only"})`, `£${d.perRemoteUser}/mo`]);
+                const fullUserParts = [];
+                if (d.fullBlended) fullUserParts.push("blended");
+                fullUserParts.push(d.securityTier !== "none" ? "support & security" : "support only");
+                const remoteUserParts = [];
+                if (d.remoteBlended) remoteUserParts.push("blended");
+                remoteUserParts.push(d.securityTier !== "none" ? "support & security" : "support only");
+                if (d.perFullUser) cards.push([`Per full user (${fullUserParts.join(", ")})`, `£${d.perFullUser}/mo`]);
+                if (d.perRemoteUser) cards.push([`Per remote user (${remoteUserParts.join(", ")})`, `£${d.perRemoteUser}/mo`]);
                 if (d.perEmailUser) cards.push([`Per email user`, `£${d.perEmailUser}/mo`]);
                 cards.push([`Annual commitment`, `£${(d.total * 12).toLocaleString("en-GB", { minimumFractionDigits: 2 })}`]);
                 const cardW = CW / cards.length;
